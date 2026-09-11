@@ -490,7 +490,8 @@ def plot_heatmap(
 
     row_h = 0.42
     header_h = 0.95
-    title_pad = 1.55
+    # Extra pad so centered title/subtitle sit above the headshot (no overlap)
+    title_pad = 2.35
     fig_w = 14.5
     fig_h = title_pad + header_h + n * row_h + 0.7
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
@@ -500,36 +501,38 @@ def plot_heatmap(
     fig.patch.set_facecolor("white")
     ax.set_facecolor("white")
 
-    # Title / subtitle
+    # Title / subtitle — centered at top, clear of headshot
     ax.text(
-        0.05,
-        n + title_pad - 0.15,
+        total_w / 2,
+        n + title_pad - 0.12,
         title,
         fontsize=18,
         fontweight="bold",
         color="#111",
-        ha="left",
+        ha="center",
         va="top",
         clip_on=False,
+        zorder=8,
     )
     ax.text(
-        0.05,
-        n + title_pad - 0.55,
+        total_w / 2,
+        n + title_pad - 0.52,
         subtitle,
         fontsize=10,
         color="#666",
-        ha="left",
+        ha="center",
         va="top",
         clip_on=False,
+        zorder=8,
     )
 
-    # Headshot above SEASON/POSITION
+    # Headshot above SEASON/POSITION only (below title band)
     hs = circular_headshot(player.get("headshot"), player["gsis_id"], size=140)
     if hs is not None:
         im = OffsetImage(np.asarray(hs), zoom=0.38)
         ab = AnnotationBbox(
             im,
-            (xs[0] + widths[0] * 0.35, n + 0.55),
+            (xs[0] + widths[0] * 0.35, n + 0.48),
             frameon=False,
             pad=0,
             zorder=6,
