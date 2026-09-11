@@ -6,7 +6,7 @@ Recreates an attached-style per-season heatmap for any running back:
   TARGET SHARE | AIR YARDS SHARE | RUSH SHARE | OPPS SHARE |
   TARGETS PER SNAP | OPPS PER SNAP
 
-Only REG seasons with >= --min-games (default 8) are shown.
+All REG seasons with at least --min-games games are shown (default 0 = no floor).
 
 Usage:
   python rb_career_production.py \\
@@ -14,7 +14,7 @@ Usage:
   python rb_career_production.py \\
       --player "Bijan Robinson" --out /tmp/bijan.png
   python rb_career_production.py \\
-      --gsis-id 00-0033280 --min-games 8 --seasons 2017-2025
+      --gsis-id 00-0033280 --min-games 1 --seasons 2017-2026
   python rb_career_production.py \\
       --player "Christian McCaffrey" \\
       --out /workspace/nflverse-charts/examples/rb_career_cmc.png
@@ -485,10 +485,13 @@ def plot_heatmap(
     title_team_abbr = rows[-1]["team"] if rows else latest
     title_team = team_name_map.get(title_team_abbr) or title_team_abbr or ""
     title = f"{player['display_name']} - {title_team}"
-    subtitle = (
-        f"Career Production per Game | Historical Seasons with a minimum of "
-        f"{meta['min_games']} games"
-    )
+    if meta["min_games"] <= 0:
+        subtitle = "Career Production per Game | All historical REG seasons"
+    else:
+        subtitle = (
+            f"Career Production per Game | Historical Seasons with a minimum of "
+            f"{meta['min_games']} games"
+        )
 
     # Columns: heat from EXPECTED onward; HALF-PPR plain
     heat_keys = [
@@ -740,7 +743,7 @@ def main() -> int:
     )
     ap.add_argument("--player", type=str, default=None, help='Player name, e.g. "Christian McCaffrey"')
     ap.add_argument("--gsis-id", type=str, default=None, help="GSIS player id")
-    ap.add_argument("--min-games", type=int, default=8, help="Minimum REG games (default 8)")
+    ap.add_argument("--min-games", type=int, default=0, help="Minimum REG games to include a season (default 0 = no floor)")
     ap.add_argument(
         "--seasons",
         type=str,
