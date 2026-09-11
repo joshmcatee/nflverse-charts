@@ -108,6 +108,7 @@ def download_logo(abbr: str, teams: pl.DataFrame) -> Path | None:
 
 
 def circular_headshot(url: str | None, gsis_id: str, size: int = 160) -> Image.Image | None:
+    """Load nflverse/NFL.com headshot; drop black studio backdrop; circular crop."""
     HEADSHOT_DIR.mkdir(parents=True, exist_ok=True)
     dest = HEADSHOT_DIR / f"{gsis_id}.png"
     img = None
@@ -125,17 +126,45 @@ def circular_headshot(url: str | None, gsis_id: str, size: int = 160) -> Image.I
             return None
     if img is None:
         return None
-    # Center-crop to square first — NFL headshots are portrait; bare resize squashes faces
-    w, h = img.size
-    side = min(w, h)
-    left = (w - side) // 2
-    top = (h - side) // 2
-    img = img.crop((left, top, left + side, top + side))
-    img = img.resize((size, size), Image.Resampling.LANCZOS)
+
+    arr = np.asarray(img).copy()
+    # Punch studio backdrop: near-black OR near corner color
+    corners = np.vstack([
+        arr[0, 0, :3], arr[0, -1, :3], arr[-1, 0, :3], arr[-1, -1, :3]
+    ]).astype(np.int16)
+    corner = np.median(corners, axis=0)
+    rgb = arr[:, :, :3].astype(np.int16)
+    dist = np.abs(rgb - corner).sum(axis=2)
+    luma = rgb.mean(axis=2)
+    backdrop = (dist < 55) | (luma < 45)
+    arr[backdrop, 3] = 0
+    img = Image.fromarray(arr, mode="RGBA")
+
+    # Opaque bbox, then FACE-WEIGHTED square crop (NFL.com plates are wide torso shots)
+    alpha = np.asarray(img)[:, :, 3]
+    ys, xs = np.where(alpha > 20)
+    if len(xs) == 0:
+        return None
+    left, right = int(xs.min()), int(xs.max()) + 1
+    top, bottom = int(ys.min()), int(ys.max()) + 1
+    bw, bh = right - left, bottom - top
+    side = min(bw, bh)
+    if bw >= bh:
+        left2 = left + (bw - side) // 2
+        top2 = top
+    else:
+        left2 = left
+        top2 = top + (bh - side) // 5
+    img = img.crop((left2, top2, left2 + side, top2 + side))
+    square = img.resize((size, size), Image.Resampling.LANCZOS)
+
+    # Composite onto white, then circular mask — no black halo on white charts
+    white = Image.new("RGBA", (size, size), (255, 255, 255, 255))
+    white.paste(square, (0, 0), square)
     mask = Image.new("L", (size, size), 0)
-    ImageDraw.Draw(mask).ellipse((0, 0, size - 1, size - 1), fill=255)
+    ImageDraw.Draw(mask).ellipse((1, 1, size - 2, size - 2), fill=255)
     out = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    out.paste(img, (0, 0))
+    out.paste(white, (0, 0))
     out.putalpha(mask)
     return out
 
@@ -496,65 +525,48 @@ def plot_heatmap(
 
     row_h = 0.42
     header_h = 0.95
-    # Title band + headshot band + gap before column headers (no overlap)
-    title_pad = 3.15
     fig_w = 14.5
-    fig_h = title_pad + header_h + n * row_h + 0.7
-    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+    table_data_h = n + header_h * 0.55 + 0.55
+    # Leave a dedicated blank band (inches) under the title for the PIL headshot paste
+    head_band_in = 1.15
+    fig_h = 0.90 + head_band_in + max(3.2, table_data_h * 0.55) + 0.35
+    fig = plt.figure(figsize=(fig_w, fig_h), facecolor="white")
+    gs = fig.add_gridspec(
+        3, 1,
+        height_ratios=[0.90, head_band_in, max(3.2, table_data_h * 0.55)],
+        hspace=0.25,
+        left=0.04, right=0.98, top=0.97, bottom=0.05,
+    )
+
+    # Band 1: centered title only
+    ax_title = fig.add_subplot(gs[0, 0])
+    ax_title.set_facecolor("white")
+    ax_title.axis("off")
+    ax_title.text(
+        0.5, 0.70, title,
+        transform=ax_title.transAxes,
+        ha="center", va="center",
+        fontsize=18, fontweight="bold", color="#111",
+    )
+    ax_title.text(
+        0.5, 0.22, subtitle,
+        transform=ax_title.transAxes,
+        ha="center", va="center",
+        fontsize=10, color="#666",
+    )
+
+    # Band 2: empty white spacer — headshot pasted here later via PIL (no mpl distortion)
+    ax_gap = fig.add_subplot(gs[1, 0])
+    ax_gap.set_facecolor("white")
+    ax_gap.axis("off")
+
+    # Band 3: table only
+    ax = fig.add_subplot(gs[2, 0])
     ax.set_xlim(0, total_w)
-    ax.set_ylim(-0.55, n + title_pad)
+    ax.set_ylim(-0.55, n + header_h * 0.55)
     ax.axis("off")
-    fig.patch.set_facecolor("white")
     ax.set_facecolor("white")
 
-    # Title / subtitle — centered at top
-    ax.text(
-        total_w / 2,
-        n + title_pad - 0.10,
-        title,
-        fontsize=18,
-        fontweight="bold",
-        color="#111",
-        ha="center",
-        va="top",
-        clip_on=False,
-        zorder=8,
-    )
-    ax.text(
-        total_w / 2,
-        n + title_pad - 0.50,
-        subtitle,
-        fontsize=10,
-        color="#666",
-        ha="center",
-        va="top",
-        clip_on=False,
-        zorder=8,
-    )
-
-    # Headshot: nflverse load_players.headshot (NFL.com URL).
-    # Place in its own band ABOVE column headers; draw in axes-fraction
-    # so data-aspect doesn't squash the circle.
-    hs = circular_headshot(player.get("headshot"), player["gsis_id"], size=180)
-    if hs is not None:
-        # axes y: headshot center ~ midway between subtitle and header row
-        # Convert desired data y → axes fraction for undistorted OffsetImage
-        y_data = n + 1.35
-        y_ax = (y_data - (-0.55)) / ((n + title_pad) - (-0.55))
-        x_ax = (xs[0] + widths[0] * 0.45) / total_w
-        im = OffsetImage(np.asarray(hs), zoom=0.42)
-        ab = AnnotationBbox(
-            im,
-            (x_ax, y_ax),
-            xycoords="axes fraction",
-            frameon=False,
-            pad=0,
-            box_alignment=(0.5, 0.5),
-            zorder=6,
-        )
-        ax.add_artist(ab)
-
-    # Header labels (well below headshot band)
     header_y = n + 0.05
     for i, lab in enumerate(col_labels):
         cx = xs[i] + widths[i] / 2
@@ -570,8 +582,9 @@ def plot_heatmap(
             linespacing=1.15,
             zorder=5,
         )
-    # Header underline
     ax.plot([0, total_w], [n, n], color="#111", lw=1.6, zorder=5)
+
+
 
     cmap = _heat_cmap()
     # Column-wise min/max for heat columns
@@ -698,8 +711,39 @@ def plot_heatmap(
     )
 
     out.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out, dpi=170, facecolor="white", bbox_inches="tight", pad_inches=0.3)
+    dpi = 170
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=dpi, facecolor="white")
     plt.close(fig)
+    buf.seek(0)
+    base = Image.open(buf).convert("RGBA")
+
+    # Paste circular headshot into the blank band under the title (true pixels, no squash)
+    hs = circular_headshot(player.get("headshot"), player["gsis_id"], size=280)
+    if hs is not None:
+        target = int(0.90 * dpi)  # ~0.90" square — stays inside head band
+        hs = hs.resize((target, target), Image.Resampling.LANCZOS)
+        W, H = base.size
+        # Place fully inside the blank band under the title (never clip, never cover table)
+        # Title band ≈ top 12% ; table header rule ≈ start of lower 55%+
+        arr = np.asarray(base.convert("L"))
+        mid = arr[:, W // 5 : W * 4 // 5]
+        row_dark = (mid < 60).mean(axis=1)
+        rules = np.where(row_dark > 0.20)[0]
+        # Skip very top (title ink); take first rule in lower-upper region
+        rules = rules[rules > int(0.14 * H)]
+        rule_y = int(rules[0]) if len(rules) else int(0.42 * H)
+        band_top = int(0.125 * H)  # below subtitle
+        band_bot = rule_y - 8
+        y = (band_top + band_bot - target) // 2
+        y = int(np.clip(y, band_top, max(band_top, band_bot - target)))
+        x = int(0.028 * W)
+        # Final safety: must not cover title or table rule
+        assert y >= 4 and y + target <= rule_y - 4, (y, target, rule_y, H)
+        base.paste(hs, (x, y), hs)
+
+    base.convert("RGB").save(out, format="PNG", optimize=True)
+
 
 
 def main() -> int:
