@@ -30,6 +30,7 @@ Data downloads on first run (cached by nflverse).
 | `hvt_chart.py` / `team_hvt_bar.py` | High-value touches (RB HVT scatter / team bar) |
 | `rb_opportunity_table.py` | RB snaps / targets / carry shares table |
 | `wopr_chart.py` | Weighted Opportunity Rating (WOPR) for one game |
+| `rb_career_production.py` | RB career half-PPR heatmap (expected FP, shares, snaps) |
 
 ## Examples
 
