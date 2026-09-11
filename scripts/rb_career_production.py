@@ -524,55 +524,71 @@ def plot_heatmap(
         x += w
 
     row_h = 0.42
-    header_h = 0.95
+    header_h = 0.85
     fig_w = 14.5
-    table_data_h = n + header_h * 0.55 + 0.55
-    # Leave a dedicated blank band (inches) under the title for the PIL headshot paste
-    head_band_in = 1.15
-    fig_h = 0.90 + head_band_in + max(3.2, table_data_h * 0.55) + 0.35
+    # Compact header like the reference: headshot LEFT of title, table tight below
+    shot_in = 0.95  # inches, square
+    title_in = 0.95
+    table_in = header_h + n * row_h + 0.55
+    fig_h = title_in + table_in + 0.25
     fig = plt.figure(figsize=(fig_w, fig_h), facecolor="white")
-    gs = fig.add_gridspec(
-        3, 1,
-        height_ratios=[0.90, head_band_in, max(3.2, table_data_h * 0.55)],
-        hspace=0.25,
-        left=0.04, right=0.98, top=0.97, bottom=0.05,
-    )
 
-    # Band 1: centered title only
-    ax_title = fig.add_subplot(gs[0, 0])
-    ax_title.set_facecolor("white")
-    ax_title.axis("off")
-    ax_title.text(
-        0.5, 0.70, title,
-        transform=ax_title.transAxes,
-        ha="center", va="center",
-        fontsize=18, fontweight="bold", color="#111",
-    )
-    ax_title.text(
-        0.5, 0.22, subtitle,
-        transform=ax_title.transAxes,
-        ha="center", va="center",
-        fontsize=10, color="#666",
-    )
-
-    # Band 2: empty white spacer — headshot pasted here later via PIL (no mpl distortion)
-    ax_gap = fig.add_subplot(gs[1, 0])
-    ax_gap.set_facecolor("white")
-    ax_gap.axis("off")
-
-    # Band 3: table only
-    ax = fig.add_subplot(gs[2, 0])
+    # Table axes fills everything below the header strip
+    table_top = 1.0 - (title_in + 0.06) / fig_h
+    ax = fig.add_axes([0.04, 0.06, 0.92, table_top - 0.06])
     ax.set_xlim(0, total_w)
-    ax.set_ylim(-0.55, n + header_h * 0.55)
+    ax.set_ylim(-0.45, n + 0.55)
     ax.axis("off")
     ax.set_facecolor("white")
 
-    header_y = n + 0.05
+    # Square headshot axes in figure inches (equal W/H → no squash)
+    hs = circular_headshot(player.get("headshot"), player["gsis_id"], size=240)
+    hs_left = 0.035
+    hs_bottom = table_top + 0.01
+    hs_w = shot_in / fig_w
+    hs_h = shot_in / fig_h
+    # Vertically center headshot in the header strip
+    header_strip_h = 1.0 - table_top
+    hs_bottom = table_top + max(0.0, (header_strip_h - hs_h) / 2)
+    if hs is not None:
+        ax_hs = fig.add_axes([hs_left, hs_bottom, hs_w, hs_h])
+        ax_hs.set_facecolor("white")
+        ax_hs.imshow(np.asarray(hs), interpolation="lanczos")
+        ax_hs.set_xticks([])
+        ax_hs.set_yticks([])
+        for sp in ax_hs.spines.values():
+            sp.set_visible(False)
+        ax_hs.set_aspect("equal")
+
+    # Title / subtitle to the RIGHT of the headshot (reference layout)
+    text_x = hs_left + hs_w + 0.015
+    fig.text(
+        text_x,
+        hs_bottom + hs_h * 0.68,
+        title,
+        ha="left",
+        va="center",
+        fontsize=18,
+        fontweight="bold",
+        color="#111",
+    )
+    fig.text(
+        text_x,
+        hs_bottom + hs_h * 0.28,
+        subtitle,
+        ha="left",
+        va="center",
+        fontsize=10,
+        color="#666",
+    )
+
+    # Column headers
+    header_y = n + 0.08
     for i, lab in enumerate(col_labels):
         cx = xs[i] + widths[i] / 2
         ax.text(
             cx,
-            header_y + 0.35,
+            header_y + 0.28,
             lab,
             ha="center",
             va="center",
@@ -583,6 +599,7 @@ def plot_heatmap(
             zorder=5,
         )
     ax.plot([0, total_w], [n, n], color="#111", lw=1.6, zorder=5)
+
 
 
 
@@ -711,38 +728,9 @@ def plot_heatmap(
     )
 
     out.parent.mkdir(parents=True, exist_ok=True)
-    dpi = 170
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=dpi, facecolor="white")
+    fig.savefig(out, dpi=170, facecolor="white", bbox_inches="tight", pad_inches=0.25)
     plt.close(fig)
-    buf.seek(0)
-    base = Image.open(buf).convert("RGBA")
 
-    # Paste circular headshot into the blank band under the title (true pixels, no squash)
-    hs = circular_headshot(player.get("headshot"), player["gsis_id"], size=280)
-    if hs is not None:
-        target = int(0.90 * dpi)  # ~0.90" square — stays inside head band
-        hs = hs.resize((target, target), Image.Resampling.LANCZOS)
-        W, H = base.size
-        # Place fully inside the blank band under the title (never clip, never cover table)
-        # Title band ≈ top 12% ; table header rule ≈ start of lower 55%+
-        arr = np.asarray(base.convert("L"))
-        mid = arr[:, W // 5 : W * 4 // 5]
-        row_dark = (mid < 60).mean(axis=1)
-        rules = np.where(row_dark > 0.20)[0]
-        # Skip very top (title ink); take first rule in lower-upper region
-        rules = rules[rules > int(0.14 * H)]
-        rule_y = int(rules[0]) if len(rules) else int(0.42 * H)
-        band_top = int(0.125 * H)  # below subtitle
-        band_bot = rule_y - 8
-        y = (band_top + band_bot - target) // 2
-        y = int(np.clip(y, band_top, max(band_top, band_bot - target)))
-        x = int(0.028 * W)
-        # Final safety: must not cover title or table rule
-        assert y >= 4 and y + target <= rule_y - 4, (y, target, rule_y, H)
-        base.paste(hs, (x, y), hs)
-
-    base.convert("RGB").save(out, format="PNG", optimize=True)
 
 
 
