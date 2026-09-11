@@ -125,6 +125,12 @@ def circular_headshot(url: str | None, gsis_id: str, size: int = 160) -> Image.I
             return None
     if img is None:
         return None
+    # Center-crop to square first — NFL headshots are portrait; bare resize squashes faces
+    w, h = img.size
+    side = min(w, h)
+    left = (w - side) // 2
+    top = (h - side) // 2
+    img = img.crop((left, top, left + side, top + side))
     img = img.resize((size, size), Image.Resampling.LANCZOS)
     mask = Image.new("L", (size, size), 0)
     ImageDraw.Draw(mask).ellipse((0, 0, size - 1, size - 1), fill=255)
@@ -490,8 +496,8 @@ def plot_heatmap(
 
     row_h = 0.42
     header_h = 0.95
-    # Extra pad so centered title/subtitle sit above the headshot (no overlap)
-    title_pad = 2.35
+    # Title band + headshot band + gap before column headers (no overlap)
+    title_pad = 3.15
     fig_w = 14.5
     fig_h = title_pad + header_h + n * row_h + 0.7
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
@@ -501,10 +507,10 @@ def plot_heatmap(
     fig.patch.set_facecolor("white")
     ax.set_facecolor("white")
 
-    # Title / subtitle — centered at top, clear of headshot
+    # Title / subtitle — centered at top
     ax.text(
         total_w / 2,
-        n + title_pad - 0.12,
+        n + title_pad - 0.10,
         title,
         fontsize=18,
         fontweight="bold",
@@ -516,7 +522,7 @@ def plot_heatmap(
     )
     ax.text(
         total_w / 2,
-        n + title_pad - 0.52,
+        n + title_pad - 0.50,
         subtitle,
         fontsize=10,
         color="#666",
@@ -526,20 +532,29 @@ def plot_heatmap(
         zorder=8,
     )
 
-    # Headshot above SEASON/POSITION only (below title band)
-    hs = circular_headshot(player.get("headshot"), player["gsis_id"], size=140)
+    # Headshot: nflverse load_players.headshot (NFL.com URL).
+    # Place in its own band ABOVE column headers; draw in axes-fraction
+    # so data-aspect doesn't squash the circle.
+    hs = circular_headshot(player.get("headshot"), player["gsis_id"], size=180)
     if hs is not None:
-        im = OffsetImage(np.asarray(hs), zoom=0.38)
+        # axes y: headshot center ~ midway between subtitle and header row
+        # Convert desired data y → axes fraction for undistorted OffsetImage
+        y_data = n + 1.35
+        y_ax = (y_data - (-0.55)) / ((n + title_pad) - (-0.55))
+        x_ax = (xs[0] + widths[0] * 0.45) / total_w
+        im = OffsetImage(np.asarray(hs), zoom=0.42)
         ab = AnnotationBbox(
             im,
-            (xs[0] + widths[0] * 0.35, n + 0.48),
+            (x_ax, y_ax),
+            xycoords="axes fraction",
             frameon=False,
             pad=0,
+            box_alignment=(0.5, 0.5),
             zorder=6,
         )
         ax.add_artist(ab)
 
-    # Header labels
+    # Header labels (well below headshot band)
     header_y = n + 0.05
     for i, lab in enumerate(col_labels):
         cx = xs[i] + widths[i] / 2
